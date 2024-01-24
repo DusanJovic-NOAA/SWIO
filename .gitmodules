@@ -1,0 +1,4 @@
+[submodule "COMIO"]
+    path = COMIO
+    url = https://github.com/DusanJovic-NOAA/COMIO
+    branch = ufs-wm
