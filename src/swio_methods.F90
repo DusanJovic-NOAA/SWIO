@@ -119,7 +119,7 @@ contains
       if ((localMinIndex == numValues) .and. addEndpoint) &
         values(numValues) = valueRange(2)
     end if
-    
+
   end subroutine CoordinateSetLinear
 
   subroutine ArrayWrite(array, io, name, tile, rc)
@@ -132,7 +132,7 @@ contains
     ! -- local variables
     integer                              :: localrc, stat
     integer                              :: de, deCount, localDe, localDeCount
-    integer                              :: i, item, lsize
+    integer                              :: i, item, lsize, uidx
     integer                              :: dimCount, rank, tileCount, tileId
     integer, dimension(:),   allocatable :: undistLBound, undistUBound
     integer, dimension(:),   allocatable :: distgridToArrayMap
@@ -197,35 +197,10 @@ contains
       file=__FILE__,  &
       rcToReturn=rc)) return  ! bail out
 
-    ! fill undistributed dimensions first
     globalElemCount = 0
     localElemCount  = 0
     localElemStart  = 0
-    if (rank > dimCount) then
-      lsize = rank - dimCount
-      allocate(undistLBound(lsize), undistUBound(lsize), stat=stat)
-      if (ESMF_LogFoundAllocError(statusToCheck=stat, msg="Unable to allocate memory", &
-        line=__LINE__,  &
-        file=__FILE__,  &
-        rcToReturn=rc)) return  ! bail out
-      call ESMF_ArrayGet(array, undistLBound=undistLBound, undistUBound=undistUBound, rc=localrc)
-      if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
-        line=__LINE__,  &
-        file=__FILE__,  &
-        rcToReturn=rc)) return  ! bail out
 
-      globalElemCount(dimCount+1:rank) = undistUBound - undistLBound + 1
-      localElemStart (dimCount+1:rank) = undistLBound
-      localElemCount (dimCount+1:rank) = globalElemCount(dimCount+1:rank)
-   
-      deallocate(undistLBound, undistUBound, stat=stat)
-      if (ESMF_LogFoundDeallocError(statusToCheck=stat, msg="Unable to free memory", &
-        line=__LINE__,  &
-        file=__FILE__,  &
-        rcToReturn=rc)) return  ! bail out
-    end if
- 
-    ! now work on distributed dimensions
     call ESMF_ArrayGet(array, distgridToArrayMap=distgridToArrayMap, rc=localrc)
     if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
       line=__LINE__,  &
@@ -238,6 +213,7 @@ contains
 
       if (tileId == deToTileMap(de)) then
 
+        ! distributed dimensions
         do item = 1, dimCount
           i = distgridToArrayMap(item)
           if (i /= 0) then
@@ -246,7 +222,44 @@ contains
             localElemCount (i) = maxIndexPDe(item,de) - minIndexPDe(item,de) + 1
           end if
         end do
-   
+
+        ! undistributed dimensions
+        if (rank > dimCount) then
+          lsize = rank - dimCount
+          allocate(undistLBound(lsize), undistUBound(lsize), stat=stat)
+          if (ESMF_LogFoundAllocError(statusToCheck=stat, msg="Unable to allocate memory", &
+            line=__LINE__,  &
+            file=__FILE__,  &
+            rcToReturn=rc)) return  ! bail out
+          call ESMF_ArrayGet(array, undistLBound=undistLBound, undistUBound=undistUBound, rc=localrc)
+          if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
+            line=__LINE__,  &
+            file=__FILE__,  &
+            rcToReturn=rc)) return  ! bail out
+
+          uidx = 0
+          do item = 1, rank
+            if (globalElemCount(item) == 0) then
+              uidx = uidx + 1
+              if (uidx > lsize) then
+                stop 'uidx > lsize' ! FIXME
+              end if
+              globalElemCount(item) = undistUBound(uidx) - undistLBound(uidx) + 1
+              localElemStart (item) = undistLBound(uidx)
+              localElemCount (item) = globalElemCount(item)
+            end if
+          end do
+          if (uidx /= lsize) then
+            stop 'uidx /= lsize' ! FIXME
+          end if
+
+          deallocate(undistLBound, undistUBound, stat=stat)
+          if (ESMF_LogFoundDeallocError(statusToCheck=stat, msg="Unable to free memory", &
+            line=__LINE__,  &
+            file=__FILE__,  &
+            rcToReturn=rc)) return  ! bail out
+        end if
+
         ! set dataset global and local domain
         call io % domain(globalElemCount, localElemStart, localElemCount)
         if (io % err % check(msg="Failure setting dataset domain", &
@@ -258,7 +271,7 @@ contains
             rcToReturn=rc)
           return  ! bail out
         end if
-    
+
         ! write dataset
         select case (rank)
           case (1)
