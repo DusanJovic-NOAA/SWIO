@@ -197,10 +197,6 @@ contains
       file=__FILE__,  &
       rcToReturn=rc)) return  ! bail out
 
-    globalElemCount = 0
-    localElemCount  = 0
-    localElemStart  = 0
-
     call ESMF_ArrayGet(array, distgridToArrayMap=distgridToArrayMap, rc=localrc)
     if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
       line=__LINE__,  &
@@ -212,6 +208,10 @@ contains
       de = localDeToDeMap(localDe + 1) + 1
 
       if (tileId == deToTileMap(de)) then
+
+        globalElemCount = 0
+        localElemCount  = 0
+        localElemStart  = 0
 
         ! distributed dimensions
         do item = 1, dimCount
