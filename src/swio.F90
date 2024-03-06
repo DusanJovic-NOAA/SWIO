@@ -319,6 +319,15 @@ module SWIO
       sharePolicyField="not share"
     end if
 
+    ! always advertise special field - ufsio_metadata
+    call NUOPC_Advertise(importState, StandardName="ufsio_metadata", &
+      SharePolicyField=sharePolicyField, &
+      TransferOfferGeomObject=transferOfferGeomObject, rc=rc)
+    if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU, &
+      line=__LINE__,  &
+      file=__FILE__)) &
+      return  ! bail out
+
     ! get import fields from Config
     ! - locate field table
     call ESMF_ConfigFindLabel(config, "import_fields::", rc=rc)

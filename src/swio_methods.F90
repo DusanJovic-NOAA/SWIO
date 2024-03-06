@@ -388,6 +388,7 @@ contains
       rcToReturn=rc)) &
       return  ! bail out
 
+#if 0
     ! write attributes
     do item = 1, size(attributeList, dim=1)
       call NUOPC_GetAttribute(field, name=trim(attributeList(item,1)), &
@@ -411,6 +412,7 @@ contains
         end if
       end if
     end do
+#endif
 
   end subroutine FieldWrite
 
@@ -1227,7 +1229,7 @@ contains
     character(len=ESMF_MAXSTR)          :: name
     character(len=ESMF_MAXSTR)          :: pName
     character(len=ESMF_MAXSTR)          :: fieldName
-    character(len=ESMF_MAXSTR)          :: fileName
+    character(len=ESMF_MAXSTR)          :: fileName = ''
     character(len=ESMF_MAXSTR), pointer :: standardNameList(:)
     type(ESMF_Array)                    :: array
     type(ESMF_Field)                    :: field
@@ -1240,6 +1242,21 @@ contains
     type(SWIO_InternalState_T)          :: is
     type(SWIO_Data_T), pointer          :: this
 
+    type(ESMF_VM)                       :: vm
+    integer                             :: localPet
+    integer(kind=ESMF_KIND_I4), pointer :: fldptr_info(:,:)
+    character(len=:), allocatable       :: string_info
+    type(ESMF_Info)                     :: info
+    integer                             :: num_global_attrs
+    character(len=64)                   :: jsonType
+    integer                             :: idx
+    type(ESMF_TypeKind_Flag)            :: typekind
+    character(len=64)                   :: ikey
+    integer(kind=ESMF_KIND_I4)          :: value_i4
+    integer(kind=ESMF_KIND_R4)          :: value_r4
+    integer(kind=ESMF_KIND_R8)          :: value_r8
+    character(len=256)                  :: value_ch
+
     ! begin
     if (present(rc)) rc = ESMF_SUCCESS
 
@@ -1248,6 +1265,13 @@ contains
 
     ! get component's info
     call NUOPC_CompGet(gcomp, name=name, verbosity=verbosity, rc=localrc)
+    if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
+      line=__LINE__,  &
+      file=__FILE__,  &
+      rcToReturn=rc)) &
+      return  ! bail out
+
+    call ESMF_GridCompGet(gcomp, vm=vm, localPet=localPet, rc=localrc)
     if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
       line=__LINE__,  &
       file=__FILE__,  &
@@ -1283,6 +1307,53 @@ contains
       file=__FILE__,  &
       rcToReturn=rc)) &
       return  ! bail out
+
+    if (localPet == 0) then
+
+      call ESMF_StateGet(importState, "ufsio_metadata", field, rc=localrc)
+      if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
+        line=__LINE__,  &
+        file=__FILE__,  &
+        rcToReturn=rc)) &
+        return  ! bail out
+
+      call ESMF_FieldGet(field, farrayPtr=fldptr_info, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
+        line=__LINE__,  &
+        file=__FILE__,  &
+        rcToReturn=rc)) &
+        return
+
+      string_info = trim(char_array_to_string(transfer(fldptr_info(1,:), ' ', size(fldptr_info(1,:))*4)))
+
+      info = ESMF_InfoCreate(string_info, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
+        line=__LINE__,  &
+        file=__FILE__,  &
+        rcToReturn=rc)) &
+        return
+
+    else
+
+      info = ESMF_InfoCreate(rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
+        line=__LINE__,  &
+        file=__FILE__,  &
+        rcToReturn=rc)) &
+        return
+
+    end if
+
+    call ESMF_InfoBroadcast(info, rootPet=0, rc=rc)
+    if (ESMF_LogFoundError(rcToCheck=localrc, msg=ESMF_LOGERR_PASSTHRU, &
+      line=__LINE__,  &
+      file=__FILE__,  &
+      rcToReturn=rc)) &
+      return  ! bail out
+
+    ! write(0,*) 'info: |', trim(ESMF_InfoDump(info)), '|'
+
+    call ESMF_InfoGet(info, key='/ufsio/filename', value=fileName, default='', rc=rc)
 
     ! retrieve field list
     nullify(standardNameList)
@@ -1328,7 +1399,9 @@ contains
 
     if (isTimeValid) then
       ! open file
-      fileName = trim(this % filePrefix) // "." // timeStamp // "." // trim(this % fileSuffix)
+      if (trim(fileName) == '') then
+        fileName = trim(this % filePrefix) // "." // timeStamp // "." // trim(this % fileSuffix)
+      end if
       call this % io % open(fileName, this % cmode)
       if (this % io % err % check(msg="Failure creating file "//trim(fileName), &
         line=__LINE__,  &
@@ -1349,6 +1422,7 @@ contains
           return  ! bail out
       end if
 
+#if 0
       ! write Field coordinates and ungridded dimensions
       call FieldWriteCoord(field, this % io, georeference=this % geoReference, &
         logLabel=trim(name)//": "//trim(pName), verbosity=verbosity, rc=localrc)
@@ -1357,6 +1431,7 @@ contains
         file=__FILE__,  &
         rcToReturn=rc)) &
         return  ! bail out
+#endif
 
       ! mask output fields using fill value
       if (associated(this % mask)) then
@@ -1479,6 +1554,29 @@ contains
         end do
       end do
 
+      call ESMF_InfoGet(info, key='/ufsio/global_attributes', size=num_global_attrs, rc=rc)
+      do idx = 1, num_global_attrs
+        call ESMF_InfoGet(info, key='/ufsio/global_attributes', idx=idx, jsonType=jsonType, typekind=typekind, ikey=ikey, rc=rc)
+        if (typekind == ESMF_TYPEKIND_I4) then
+           call ESMF_InfoGet(info, key='/ufsio/global_attributes/'//trim(ikey), value=value_i4, rc=rc)
+           call this % io % describe(trim(ikey), value_i4)
+        else if (typekind == ESMF_TYPEKIND_I8) then
+           call ESMF_InfoGet(info, key='/ufsio/global_attributes/'//trim(ikey), value=value_i4, rc=rc)
+           call this % io % describe(trim(ikey), value_i4) ! FIXME
+        else if (typekind == ESMF_TYPEKIND_R4) then
+           call ESMF_InfoGet(info, key='/ufsio/global_attributes/'//trim(ikey), value=value_r4, rc=rc)
+           call this % io % describe(trim(ikey), value_r4)
+        else if (typekind == ESMF_TYPEKIND_R8) then
+           call ESMF_InfoGet(info, key='/ufsio/global_attributes/'//trim(ikey), value=value_r4, rc=rc)
+           call this % io % describe(trim(ikey), value_r4) ! FIXME
+        else if (typekind == ESMF_TYPEKIND_CHARACTER) then
+           call ESMF_InfoGet(info, key='/ufsio/global_attributes/'//trim(ikey), value=value_ch, rc=rc)
+           call this % io % describe(trim(ikey), trim(value_ch))
+        else
+           stop 'error'
+        end if
+      end do
+
       ! write metadata as global attributes if provided
       itemCount = 0
       if (associated(this % meta)) itemCount = size(this % meta)
@@ -1551,6 +1649,19 @@ contains
         rcToReturn=rc)) &
         return  ! bail out
     end if
+
+  contains
+
+    function char_array_to_string(char_array) result(string)
+      implicit none
+      character(1), dimension(:), intent(in) :: char_array
+      character(len=size(char_array)) :: string
+      integer :: i
+      string = ' '
+      do i = 1, size(char_array)
+        if (iachar(char_array(i)) > 0) string(i:i) = char_array(i)
+      end do
+    end function
 
   end subroutine FileWrite
 
